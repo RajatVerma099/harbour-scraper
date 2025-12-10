@@ -57,7 +57,22 @@ def pretty_log_job(job: dict):
 # ===================== FIREBASE SETUP =====================
 
 FIREBASE_KEY_PATH = os.path.join(BASE_DIR, "harbour-final-firebase-private-key.json")
-cred = credentials.Certificate(FIREBASE_KEY_PATH)
+FIREBASE_KEY_JSON = os.environ.get("FIREBASE_KEY_JSON")
+
+# On GitHub Actions: use FIREBASE_KEY_JSON from env (secret).
+# Locally: fall back to the JSON file on disk.
+try:
+    if FIREBASE_KEY_JSON:
+        # Load from environment (GitHub Actions)
+        service_account_info = json.loads(FIREBASE_KEY_JSON)
+        cred = credentials.Certificate(service_account_info)
+    else:
+        # Local dev: use the file
+        cred = credentials.Certificate(FIREBASE_KEY_PATH)
+except Exception as e:
+    print(f"[FIREBASE] Failed to load credentials: {e}")
+    raise
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
