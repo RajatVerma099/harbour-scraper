@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import re
 import asyncio
@@ -18,7 +19,7 @@ from telethon.sessions import StringSession  # NEW
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# File that permanently stores already-processed job URLs
+# File that permanently stores already-processed job URLs (per environment)
 PROCESSED_URLS_FILE = os.path.join(BASE_DIR, "processed_urls.txt")
 
 # Log file
@@ -27,7 +28,7 @@ LOG_FILE = os.path.join(BASE_DIR, "scraper.log")
 GROUP_NAME_HINT = "Fresher Jobs Openings"
 
 # Regex for extracting URLs from messages
-URL_REGEX = re.compile(r"https?://[^\s]+")  # same as you used
+URL_REGEX = re.compile(r"https?://[^\s]+")
 
 # Domains we care about
 TARGET_DOMAINS = ("fresheropenings.com", "freshersrecruitment.co.in")
@@ -57,9 +58,47 @@ def pretty_log_job(job: dict):
 # ===================== FIREBASE SETUP =====================
 
 FIREBASE_KEY_PATH = os.path.join(BASE_DIR, "harbour-final-firebase-private-key.json")
-cred = credentials.Certificate(FIREBASE_KEY_PATH)
+FIREBASE_KEY_JSON = os.environ.get("FIREBASE_KEY_JSON")
+
+# On GitHub Actions: use FIREBASE_KEY_JSON from env (secret).
+# Locally: fall back to the JSON file on disk.
+try:
+    if FIREBASE_KEY_JSON:
+        log("[FIREBASE] Using FIREBASE_KEY_JSON from environment.")
+        service_account_info = json.loads(FIREBASE_KEY_JSON)
+        cred = credentials.Certificate(service_account_info)
+    else:
+        log(f"[FIREBASE] Using key file at {FIREBASE_KEY_PATH}")
+        cred = credentials.Certificate(FIREBASE_KEY_PATH)
+except Exception as e:
+    print(f"[FIREBASE] Failed to load credentials: {e}")
+    raise
+
 firebase_admin.initialize_app(cred)
 db = firestore.client()
+
+# ===================== DEDUP HELPERS =====================
+
+def job_exists_for_url(url: str) -> bool:
+    """
+    Returns True if a Job with this moreInfoLink already exists in Firestore.
+    This prevents reposting the same job across runs / days.
+    """
+    try:
+        query = (
+            db.collection("Jobs")
+            .where("moreInfoLink", "==", url)
+            .limit(1)
+            .stream()
+        )
+        for _ in query:
+            return True
+        return False
+    except Exception as e:
+        log(f"[DEDUP] Error while checking existing job for url={url}: {e}")
+        log(traceback.format_exc())
+        # On error, treat as not existing so scraper can still function
+        return False
 
 # ===================== TELEGRAM API CONFIG =====================
 
@@ -68,7 +107,7 @@ API_HASH = os.environ.get("TG_API_HASH", "2fa908c209c73b52096afb82a18342b2")
 
 SESSION_NAME = os.path.join(BASE_DIR, "harbour_manual_session")
 
-# NEW: optional string session for GitHub / headless runs
+# Optional string session for GitHub / headless runs
 TG_SESSION_STRING = os.environ.get("TG_SESSION_STRING")
 
 # ===================== ONE SIGNAL NOTIFICATION FUNCTION =====================
@@ -932,7 +971,7 @@ async def main():
         log("[MAIN] No job URLs found in recent messages.")
         return
 
-    # Filter out already-processed URLs
+    # Filter out already-processed URLs (per environment)
     processed = load_processed_urls()
     new_urls = [u for u in all_urls if u not in processed]
 
@@ -945,6 +984,12 @@ async def main():
     # Scrape each new URL and upload to Firestore
     for url in new_urls:
         log(f"[MAIN] Processing URL: {url}")
+
+        # 🔁 Firestore-based deduplication to avoid reposting
+        if job_exists_for_url(url):
+            log("  🔁 Job for this URL already exists in Firestore. Skipping.")
+            append_processed_url(url)
+            continue
 
         if "fresheropenings.com" in url:
             job_data = scrape_job_data_fresheropenings(url)
