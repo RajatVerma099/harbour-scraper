@@ -64,11 +64,11 @@ FIREBASE_KEY_JSON = os.environ.get("FIREBASE_KEY_JSON")
 # Locally: fall back to the JSON file on disk.
 try:
     if FIREBASE_KEY_JSON:
-        log("[FIREBASE] Using FIREBASE_KEY_JSON from environment.")
+        # Load from environment (GitHub Actions)
         service_account_info = json.loads(FIREBASE_KEY_JSON)
         cred = credentials.Certificate(service_account_info)
     else:
-        log(f"[FIREBASE] Using key file at {FIREBASE_KEY_PATH}")
+        # Local dev: use the file
         cred = credentials.Certificate(FIREBASE_KEY_PATH)
 except Exception as e:
     print(f"[FIREBASE] Failed to load credentials: {e}")
