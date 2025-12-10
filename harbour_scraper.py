@@ -894,7 +894,7 @@ async def fetch_job_urls_from_group(client: TelegramClient, entity) -> list[str]
 
 # ===================== DELETE OLD JOBS (>= 3 months) =====================
 
-def delete_old_jobs(months: int = 3):
+def delete_old_jobs(months: int = 1.5):
     """
     Delete jobs whose 'date-posted' is older than `months` months.
     Implementation uses 90 days as approximate 3 months.
